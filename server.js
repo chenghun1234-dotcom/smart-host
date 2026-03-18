@@ -9,6 +9,10 @@ const PORT = Number(process.env.PORT ?? 3000);
 app.use(cors());
 app.use(express.json());
 
+app.get('/', (req, res) => {
+  res.status(200).send('Kraken backend is running. Try /api/v1/health');
+});
+
 app.use('/api/v1', apiRoutes);
 
 app.listen(PORT, () => {
