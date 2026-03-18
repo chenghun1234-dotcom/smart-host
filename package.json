@@ -1,0 +1,17 @@
+{
+  "name": "kraken-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kraken AI Host MVP backend (Express + in-memory DB)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-ical": "^0.19.0"
+  }
+}
