@@ -24,7 +24,9 @@ let cachedKepcoData = {
 
 async function fetchAndCacheKepcoData() {
   const apiKey = process.env.KEPCO_API_KEY ?? '';
-  const apiUrl = 'http://openapi.kpx.or.kr/openapi/smp1hToday/getSmp1hToday';
+  const apiUrl =
+    process.env.KEPCO_API_URL ??
+    'https://openapi.kpx.or.kr/openapi/smp1hToday/getSmp1hToday';
 
   try {
     if (!apiKey) {
@@ -41,15 +43,33 @@ async function fetchAndCacheKepcoData() {
     }
 
     console.log('[KEPCO Cache] 한전(전력거래소) API에서 최신 데이터를 가져옵니다...');
-    const response = await axios.get(apiUrl, {
-      params: {
-        serviceKey: apiKey,
-        numOfRows: 1,
-        pageNo: 1,
-        _type: 'json',
-      },
-      timeout: 5000,
-    });
+    let response;
+    let lastError;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        response = await axios.get(apiUrl, {
+          params: {
+            serviceKey: apiKey,
+            numOfRows: 1,
+            pageNo: 1,
+            _type: 'json',
+          },
+          timeout: 20000,
+        });
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 750));
+        }
+      }
+    }
+
+    if (!response) {
+      throw lastError ?? new Error('한전 API 호출 실패');
+    }
 
     const rawItem = parseFirstItemFromKpxResponse(response.data);
     const smp = rawItem ? parseSmpValue(rawItem) : null;
@@ -69,6 +89,15 @@ async function fetchAndCacheKepcoData() {
     const message =
       typeof error?.message === 'string' ? error.message : 'Unknown error';
     console.error('[KEPCO Cache Error] 한전 API 호출 실패:', message);
+
+    if (!cachedKepcoData.timestamp) {
+      cachedKepcoData = {
+        timestamp: new Date().toISOString(),
+        currentPriceKwh: 0,
+        status: 'NORMAL',
+        source: 'fallback',
+      };
+    }
   }
 }
 
