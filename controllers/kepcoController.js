@@ -22,7 +22,12 @@ let cachedKepcoData = {
   source: 'init',
 };
 
+let inFlightFetch = null;
+
 async function fetchAndCacheKepcoData() {
+  if (inFlightFetch) return inFlightFetch;
+
+  inFlightFetch = (async () => {
   const apiKey = process.env.KEPCO_API_KEY ?? '';
   const apiUrl =
     process.env.KEPCO_API_URL ??
@@ -99,15 +104,28 @@ async function fetchAndCacheKepcoData() {
       };
     }
   }
+  })();
+
+  try {
+    await inFlightFetch;
+  } finally {
+    inFlightFetch = null;
+  }
 }
 
 fetchAndCacheKepcoData();
 
 exports.getCachedPowerPrice = (req, res) => {
   if (!cachedKepcoData.timestamp) {
-    return res.status(503).json({
-      success: false,
-      message: '데이터를 준비 중입니다. 잠시 후 시도해주세요.',
+    fetchAndCacheKepcoData();
+    return res.status(200).json({
+      success: true,
+      data: {
+        timestamp: null,
+        currentPriceKwh: 0,
+        status: 'NORMAL',
+        source: 'warming',
+      },
     });
   }
 
