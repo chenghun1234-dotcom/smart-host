@@ -132,6 +132,24 @@ function readDefaultSmartThingsDeviceId() {
   return (process.env.SMARTTHINGS_DEFAULT_DEVICE_ID ?? '').toString().trim();
 }
 
+function readSmartThingsAuthorizeUrl() {
+  return (
+    process.env.SMARTTHINGS_AUTHORIZE_URL ??
+    'https://auth-global.api.smartthings.com/oauth/authorize'
+  )
+    .toString()
+    .trim();
+}
+
+function readSmartThingsTokenUrl() {
+  return (
+    process.env.SMARTTHINGS_TOKEN_URL ??
+    'https://auth-global.api.smartthings.com/oauth/token'
+  )
+    .toString()
+    .trim();
+}
+
 let hostModel = null;
 
 async function connectMongoIfConfigured() {
@@ -229,7 +247,7 @@ async function exchangeCodeForSmartThingsToken(code) {
     redirect_uri: redirectUri,
   });
 
-  const response = await axios.post('https://api.smartthings.com/oauth/token', body.toString(), {
+  const response = await axios.post(readSmartThingsTokenUrl(), body.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     timeout: 15000,
   });
@@ -290,7 +308,7 @@ function handleSmartThingsAuth(req, res) {
 
   const state = encodeState({ hostName, deviceId, iCalUrl });
 
-  const authUrl = new URL('https://api.smartthings.com/oauth/authorize');
+  const authUrl = new URL(readSmartThingsAuthorizeUrl());
   authUrl.searchParams.set('client_id', clientId);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('redirect_uri', redirectUri);
