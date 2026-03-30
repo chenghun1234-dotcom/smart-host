@@ -778,6 +778,69 @@ app.post('/st/webhook', async (req, res) => {
     return res.status(200).json({ targetUrl });
   }
 
+  if (lifecycle === 'CONFIGURATION') {
+    const phase = (req.body?.configurationData?.phase ?? '').toString().trim().toUpperCase();
+    const pageId = (req.body?.configurationData?.pageId ?? '1').toString().trim() || '1';
+
+    if (phase === 'INITIALIZE') {
+      return res.status(200).json({
+        configurationData: {
+          initialize: {
+            name: 'Onyx AI Smart Plug',
+            description: 'Onyx AI Smart Host integration',
+            id: 'app',
+            permissions: [],
+            firstPageId: '1',
+          },
+        },
+      });
+    }
+
+    if (phase === 'PAGE') {
+      return res.status(200).json({
+        configurationData: {
+          page: {
+            pageId,
+            name: 'Onyx AI Smart Plug',
+            nextPageId: null,
+            previousPageId: null,
+            complete: true,
+            sections: [
+              {
+                name: 'Onyx AI 연결',
+                settings: [
+                  {
+                    id: 'onyxInfo',
+                    name: '연동 준비 완료',
+                    description: 'Onyx AI Smart Host와 SmartThings 연결을 완료합니다.',
+                    type: 'PARAGRAPH',
+                    defaultValue: '승인을 완료하면 SmartThings 기기 제어를 시작할 수 있습니다.',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      });
+    }
+  }
+
+  if (lifecycle === 'INSTALL') {
+    return res.status(200).json({ installData: {} });
+  }
+
+  if (lifecycle === 'UPDATE') {
+    return res.status(200).json({ updateData: {} });
+  }
+
+  if (lifecycle === 'UNINSTALL') {
+    return res.status(200).json({ uninstallData: {} });
+  }
+
+  if (lifecycle === 'EVENT') {
+    return res.status(200).json({ eventData: {} });
+  }
+
   const requestHeaders =
     (req.body && typeof req.body === 'object' ? req.body.headers : null) ?? {};
   const interactionType = requestHeaders.interactionType?.toString() ?? '';
