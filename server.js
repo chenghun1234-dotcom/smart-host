@@ -312,6 +312,7 @@ function handleSmartThingsAuth(req, res) {
   authUrl.searchParams.set('client_id', clientId);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', 'r:devices:* x:devices:*');
   authUrl.searchParams.set('state', state);
 
   return res.redirect(authUrl.toString());
