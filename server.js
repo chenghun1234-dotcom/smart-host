@@ -285,12 +285,14 @@ app.get('/auth/smartthings', handleSmartThingsAuth);
 app.get('/auth/samsung', handleSmartThingsAuth);
 
 async function handleSmartThingsCallback(req, res) {
-  const Host = getHostModel();
-  if (!Host) return res.status(503).send('MongoDB not connected. Set MONGO_URI first.');
-
   try {
     const code = (req.query?.code ?? '').toString();
-    if (!code) return res.status(400).send('missing code');
+    if (!code) {
+      return res.status(200).send('OAuth callback endpoint is alive. Wait for SmartThings redirect with ?code=...');
+    }
+
+    const Host = getHostModel();
+    if (!Host) return res.status(503).send('MongoDB not connected. Set MONGO_URI first.');
 
     const stateData = decodeState(req.query?.state);
     const hostName = (stateData.hostName ?? '테스트_호스트_1').toString();
