@@ -703,6 +703,54 @@ app.get('/st/webhook', (req, res) => {
 });
 
 app.post('/st/webhook', async (req, res) => {
+  const lifecycle = (req.body?.lifecycle ?? '').toString().trim().toUpperCase();
+
+  if (lifecycle === 'PING') {
+    const challenge = (req.body?.pingData?.challenge ?? '').toString();
+    return res.status(200).json({ pingData: { challenge } });
+  }
+
+  if (lifecycle === 'CONFIRMATION') {
+    const explicitTargetUrl =
+      (process.env.SMARTAPP_TARGET_URL ?? process.env.WEBHOOK_TARGET_URL ?? '')
+        .toString()
+        .trim();
+    const forwardedProto =
+      (req.headers['x-forwarded-proto'] ?? req.protocol ?? 'https')
+        .toString()
+        .split(',')[0]
+        .trim();
+    const forwardedHost =
+      (req.headers['x-forwarded-host'] ?? req.get('host') ?? '')
+        .toString()
+        .split(',')[0]
+        .trim();
+    const inferredTargetUrl = `${forwardedProto}://${forwardedHost}/st/webhook`;
+    const targetUrl = explicitTargetUrl || inferredTargetUrl;
+
+    const confirmationUrl =
+      (req.body?.confirmationData?.confirmationUrl ?? '')
+        .toString()
+        .trim();
+
+    if (confirmationUrl) {
+      try {
+        await axios.get(confirmationUrl, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000,
+          params: { targetUrl },
+        });
+      } catch (error) {
+        console.error(
+          '[SmartApp CONFIRMATION] confirmationUrl call failed:',
+          error?.response?.data ?? error?.message ?? error,
+        );
+      }
+    }
+
+    return res.status(200).json({ targetUrl });
+  }
+
   const requestHeaders =
     (req.body && typeof req.body === 'object' ? req.body.headers : null) ?? {};
   const interactionType = requestHeaders.interactionType?.toString() ?? '';
