@@ -173,14 +173,33 @@ function getHostModel() {
   return hostModel;
 }
 
+const pendingSmartThingsAuthStates = new Map();
+
 function encodeState(payload) {
-  const json = JSON.stringify(payload ?? {});
-  return Buffer.from(json, 'utf8').toString('base64url');
+  const stateId = crypto.randomBytes(18).toString('hex');
+  const expiresAt = Date.now() + 15 * 60 * 1000;
+  pendingSmartThingsAuthStates.set(stateId, {
+    payload: payload ?? {},
+    expiresAt,
+  });
+  return stateId;
 }
 
 function decodeState(state) {
   const raw = (state ?? '').toString().trim();
   if (!raw) return {};
+
+  const now = Date.now();
+  for (const [key, value] of pendingSmartThingsAuthStates.entries()) {
+    if (!value || value.expiresAt <= now) pendingSmartThingsAuthStates.delete(key);
+  }
+
+  const stateEntry = pendingSmartThingsAuthStates.get(raw);
+  if (stateEntry && stateEntry.expiresAt > now) {
+    pendingSmartThingsAuthStates.delete(raw);
+    return stateEntry.payload ?? {};
+  }
+
   try {
     return JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
   } catch {
