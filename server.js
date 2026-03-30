@@ -16,6 +16,7 @@ const smartthingsService = require('./services/smartthingsService');
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
+let lastMongoErrorMessage = '';
 
 app.use(cors());
 app.use(
@@ -34,13 +35,17 @@ app.get('/', (req, res) => {
 app.get('/status', (req, res) => {
   const mongoUri = readMongoUri();
   const mongoose = require('mongoose');
+  const rawMongoUri = (process.env.MONGO_URI ?? '').toString();
   res.status(200).json({
     server: 'ok',
     mongoUriSet: !!mongoUri,
     mongoUriPrefix: mongoUri ? mongoUri.slice(0, 20) + '...' : 'NOT SET',
+    mongoUriSanitized: rawMongoUri !== mongoUri,
+    mongoUriHasDbName: hasDatabaseNameInMongoUri(mongoUri),
     mongoReadyState: mongoose.connection.readyState,
     mongoReadyStateLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState] ?? 'unknown',
     hostModelReady: !!getHostModel(),
+    lastMongoErrorMessage,
     env: {
       MONGO_URI: !!process.env.MONGO_URI,
       SMARTTHINGS_CLIENT_ID: !!process.env.SMARTTHINGS_CLIENT_ID,
@@ -51,7 +56,43 @@ app.get('/status', (req, res) => {
 });
 
 function readMongoUri() {
-  return (process.env.MONGO_URI ?? '').toString().trim();
+  let value = (process.env.MONGO_URI ?? '').toString().trim();
+  if (!value) return '';
+
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+
+  if (value.startsWith('<') && value.endsWith('>')) {
+    value = value.slice(1, -1).trim();
+  }
+
+  return value;
+}
+
+function hasDatabaseNameInMongoUri(uri) {
+  const raw = (uri ?? '').toString().trim();
+  if (!raw) return false;
+
+  const scheme = raw.startsWith('mongodb+srv://')
+    ? 'mongodb+srv://'
+    : raw.startsWith('mongodb://')
+      ? 'mongodb://'
+      : '';
+  if (!scheme) return false;
+
+  const noScheme = raw.slice(scheme.length);
+  const slashIndex = noScheme.indexOf('/');
+  if (slashIndex < 0) return false;
+
+  const afterSlash = noScheme.slice(slashIndex + 1);
+  if (!afterSlash) return false;
+
+  const dbName = afterSlash.split('?')[0].trim();
+  return dbName.length > 0;
 }
 
 function readSmartThingsClientId() {
@@ -96,13 +137,19 @@ let hostModel = null;
 async function connectMongoIfConfigured() {
   const mongoUri = readMongoUri();
   if (!mongoUri) {
+    lastMongoErrorMessage = 'MONGO_URI is empty';
     console.log('[MongoDB] MONGO_URI not set. Skipping MongoDB connection.');
     return null;
+  }
+
+  if (!hasDatabaseNameInMongoUri(mongoUri)) {
+    console.warn('[MongoDB] MONGO_URI has no database name. Recommended format: ...mongodb.net/onyx?...');
   }
 
   if (mongoose.connection.readyState === 1) return mongoose.connection;
 
   await mongoose.connect(mongoUri);
+  lastMongoErrorMessage = '';
   console.log('[MongoDB] connected');
 
   const hostSchema = new mongoose.Schema(
@@ -985,6 +1032,7 @@ async function initializeMongoAndAutomation() {
   try {
     await connectMongoIfConfigured();
   } catch (error) {
+    lastMongoErrorMessage = (error?.message ?? error ?? '').toString();
     console.error('[MongoDB] connection failed:', error?.message ?? error);
   }
 
