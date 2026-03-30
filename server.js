@@ -31,6 +31,25 @@ app.get('/', (req, res) => {
   res.redirect('https://nextfintechai.com');
 });
 
+app.get('/status', (req, res) => {
+  const mongoUri = readMongoUri();
+  const mongoose = require('mongoose');
+  res.status(200).json({
+    server: 'ok',
+    mongoUriSet: !!mongoUri,
+    mongoUriPrefix: mongoUri ? mongoUri.slice(0, 20) + '...' : 'NOT SET',
+    mongoReadyState: mongoose.connection.readyState,
+    mongoReadyStateLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState] ?? 'unknown',
+    hostModelReady: !!getHostModel(),
+    env: {
+      MONGO_URI: !!process.env.MONGO_URI,
+      SMARTTHINGS_CLIENT_ID: !!process.env.SMARTTHINGS_CLIENT_ID,
+      OAUTH_MOCK_MODE: process.env.OAUTH_MOCK_MODE ?? 'not set',
+      RUN_MONGO_AUTOMATION: process.env.RUN_MONGO_AUTOMATION ?? 'not set',
+    },
+  });
+});
+
 function readMongoUri() {
   return (process.env.MONGO_URI ?? '').toString().trim();
 }
