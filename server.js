@@ -288,6 +288,13 @@ async function handleSmartThingsCallback(req, res) {
   try {
     const code = (req.query?.code ?? '').toString();
     if (!code) {
+      const oauthError = (req.query?.error ?? '').toString();
+      const oauthErrorDescription = (req.query?.error_description ?? '').toString();
+      if (oauthError) {
+        return res
+          .status(400)
+          .send(`OAuth callback error: ${oauthError}${oauthErrorDescription ? ` - ${oauthErrorDescription}` : ''}`);
+      }
       return res.status(200).send('OAuth callback endpoint is alive. Wait for SmartThings redirect with ?code=...');
     }
 
