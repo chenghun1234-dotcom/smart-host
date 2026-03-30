@@ -135,7 +135,7 @@ function readDefaultSmartThingsDeviceId() {
 function readSmartThingsAuthorizeUrl() {
   return (
     process.env.SMARTTHINGS_AUTHORIZE_URL ??
-    'https://auth-global.api.smartthings.com/oauth/authorize'
+    'https://api.smartthings.com/oauth/authorize'
   )
     .toString()
     .trim();
@@ -144,7 +144,7 @@ function readSmartThingsAuthorizeUrl() {
 function readSmartThingsTokenUrl() {
   return (
     process.env.SMARTTHINGS_TOKEN_URL ??
-    'https://auth-global.api.smartthings.com/oauth/token'
+    'https://api.smartthings.com/oauth/token'
   )
     .toString()
     .trim();
