@@ -157,7 +157,7 @@ function readSmartThingsTokenUrl() {
 function readSmartThingsAuthorizeScope() {
   return (
     process.env.SMARTTHINGS_AUTHORIZE_SCOPE ??
-    'r:devices:*'
+    'r:devices:$'
   )
     .toString()
     .trim();
