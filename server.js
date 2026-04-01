@@ -316,11 +316,22 @@ function handleSmartThingsAuth(req, res) {
   authUrl.searchParams.set('client_id', clientId);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('redirect_uri', redirectUri);
-  const scope = readSmartThingsAuthorizeScope();
-  if (scope) authUrl.searchParams.set('scope', scope);
   authUrl.searchParams.set('state', state);
 
-  return res.redirect(authUrl.toString());
+  // Build final URL and append scope manually using %20 (not +) for spaces.
+  // SmartThings /oauth/authorize treats '+' as literal, not as space.
+  let finalUrl = authUrl.toString();
+  const scope = readSmartThingsAuthorizeScope();
+  if (scope) {
+    const encodedScope = scope
+      .trim()
+      .split(/\s+/)
+      .map((s) => encodeURIComponent(s))
+      .join('%20');
+    finalUrl += '&scope=' + encodedScope;
+  }
+
+  return res.redirect(finalUrl);
 }
 
 app.get('/auth/smartthings', handleSmartThingsAuth);
