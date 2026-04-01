@@ -28,6 +28,10 @@ app.use(
 );
 app.use(express.urlencoded({ extended: false }));
 
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
+
 app.get('/', (req, res) => {
   res.redirect('https://nextfintechai.com');
 });
