@@ -335,7 +335,7 @@ function handleSmartThingsAuth(req, res) {
     const encodedScope = scope
       .trim()
       .split(/\s+/)
-      .map((s) => encodeURIComponent(s))
+      .map((s) => encodeURIComponent(s).replace(/\*/g, '%2A'))
       .join('%20');
     finalUrl += '&scope=' + encodedScope;
   }
