@@ -151,7 +151,12 @@ function readSmartThingsTokenUrl() {
 }
 
 function readSmartThingsAuthorizeScope() {
-  return (process.env.SMARTTHINGS_AUTHORIZE_SCOPE ?? '').toString().trim();
+  return (
+    process.env.SMARTTHINGS_AUTHORIZE_SCOPE ??
+    'r:devices:* x:devices:*'
+  )
+    .toString()
+    .trim();
 }
 
 let hostModel = null;
