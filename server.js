@@ -200,6 +200,19 @@ function getHostModel() {
 }
 
 const pendingSmartThingsAuthStates = new Map();
+const smartThingsWebhookHistory = [];
+
+function rememberSmartThingsWebhook(payload) {
+  smartThingsWebhookHistory.unshift({
+    at: new Date().toISOString(),
+    lifecycle: (payload?.lifecycle ?? '').toString(),
+    body: payload ?? {},
+  });
+
+  if (smartThingsWebhookHistory.length > 20) {
+    smartThingsWebhookHistory.length = 20;
+  }
+}
 
 function encodeState(payload) {
   const stateId = crypto.randomBytes(18).toString('hex');
@@ -768,7 +781,16 @@ app.get('/st/webhook', (req, res) => {
   res.status(200).json({ ok: true, method: 'POST' });
 });
 
+app.get('/st/debug-last-webhook', (req, res) => {
+  res.status(200).json({
+    count: smartThingsWebhookHistory.length,
+    items: smartThingsWebhookHistory,
+  });
+});
+
 app.post('/st/webhook', async (req, res) => {
+  rememberSmartThingsWebhook(req.body);
+
   const lifecycle = (req.body?.lifecycle ?? '').toString().trim().toUpperCase();
 
   if (lifecycle === 'PING') {
@@ -845,6 +867,21 @@ app.post('/st/webhook', async (req, res) => {
             previousPageId: null,
             complete: true,
             sections: [
+              {
+                name: '제어할 기기 선택',
+                settings: [
+                  {
+                    id: 'smartDevice',
+                    name: '스마트 플러그 선택',
+                    description: 'Smart Host에서 제어할 SmartThings 스위치/플러그를 선택하세요.',
+                    type: 'DEVICE',
+                    required: true,
+                    multiple: false,
+                    capabilities: ['switch'],
+                    permissions: ['r', 'x'],
+                  },
+                ],
+              },
               {
                 name: 'Onyx AI 연결',
                 settings: [
