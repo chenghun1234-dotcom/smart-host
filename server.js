@@ -158,6 +158,10 @@ function readSmartThingsAuthorizeScope() {
   return (process.env.SMARTTHINGS_AUTHORIZE_SCOPE ?? '').toString().trim();
 }
 
+function readManualLinkSecret() {
+  return (process.env.SMARTTHINGS_MANUAL_LINK_SECRET ?? '').toString().trim();
+}
+
 let hostModel = null;
 
 async function connectMongoIfConfigured() {
@@ -201,6 +205,18 @@ function getHostModel() {
 
 const pendingSmartThingsAuthStates = new Map();
 const smartThingsWebhookHistory = [];
+const smartThingsOAuthHistory = [];
+
+function rememberSmartThingsOAuth(payload) {
+  smartThingsOAuthHistory.unshift({
+    at: new Date().toISOString(),
+    ...payload,
+  });
+
+  if (smartThingsOAuthHistory.length > 30) {
+    smartThingsOAuthHistory.length = 30;
+  }
+}
 
 function rememberSmartThingsWebhook(payload) {
   smartThingsWebhookHistory.unshift({
@@ -297,6 +313,20 @@ async function sendSmartThingsSwitchCommand({ token, deviceId, command }) {
   return true;
 }
 
+async function validateSmartThingsPersonalAccessToken(token) {
+  const response = await axios.get('https://api.smartthings.com/v1/devices?max=1', {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 15000,
+  });
+
+  const items = Array.isArray(response?.data?.items) ? response.data.items : [];
+  return {
+    ok: true,
+    sampleDeviceId: (items[0]?.deviceId ?? '').toString(),
+    sampleDeviceName: (items[0]?.label ?? items[0]?.name ?? '').toString(),
+  };
+}
+
 function isOccupiedFromIcalEvents(events, now = new Date()) {
   const data = events && typeof events === 'object' ? events : {};
 
@@ -348,6 +378,16 @@ function handleSmartThingsAuth(req, res) {
     finalUrl += '&scope=' + encodedScope;
   }
 
+  rememberSmartThingsOAuth({
+    stage: 'authorize_redirect',
+    state,
+    hostName,
+    hasDeviceId: !!deviceId,
+    hasIcalUrl: !!iCalUrl,
+    scope: scope || '(none)',
+    authorizeUrl: finalUrl,
+  });
+
   return res.redirect(finalUrl);
 }
 
@@ -360,6 +400,13 @@ async function handleSmartThingsCallback(req, res) {
     if (!code) {
       const oauthError = (req.query?.error ?? '').toString();
       const oauthErrorDescription = (req.query?.error_description ?? '').toString();
+      rememberSmartThingsOAuth({
+        stage: 'callback_error',
+        state: (req.query?.state ?? '').toString(),
+        error: oauthError || '(none)',
+        errorDescription: oauthErrorDescription || '(none)',
+        callbackQuery: req.query ?? {},
+      });
       if (oauthError) {
         return res
           .status(400)
@@ -402,8 +449,23 @@ async function handleSmartThingsCallback(req, res) {
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
 
+    rememberSmartThingsOAuth({
+      stage: 'callback_success',
+      state: (req.query?.state ?? '').toString(),
+      hostName,
+      hasDeviceId: !!deviceId,
+      hasIcalUrl: !!iCalUrl,
+      hasAccessToken: !!accessToken,
+    });
+
     return res.send('Onyx AI: 성공적으로 삼성 계정이 연동되었습니다! 창을 닫아주세요.');
   } catch (error) {
+    rememberSmartThingsOAuth({
+      stage: 'callback_exception',
+      state: (req.query?.state ?? '').toString(),
+      error: error?.message ?? 'unknown',
+      responseData: error?.response?.data ?? null,
+    });
     console.error('[OAuth Callback] failed:', error?.response?.data ?? error?.message ?? error);
     return res.status(500).send('연동 에러');
   }
@@ -411,6 +473,70 @@ async function handleSmartThingsCallback(req, res) {
 
 app.get('/oauth/callback', handleSmartThingsCallback);
 app.get('/callback', handleSmartThingsCallback);
+
+app.post('/auth/smartthings/manual-token', async (req, res) => {
+  try {
+    const manualSecret = readManualLinkSecret();
+    if (manualSecret) {
+      const provided = (req.headers['x-manual-link-secret'] ?? '').toString().trim();
+      if (!provided || provided !== manualSecret) {
+        return res.status(401).json({
+          success: false,
+          message: 'invalid manual link secret',
+        });
+      }
+    }
+
+    const Host = getHostModel();
+    if (!Host) return res.status(503).json({ success: false, message: 'MongoDB not connected' });
+
+    const hostName = (req.body?.hostName ?? 'manual-host').toString().trim() || 'manual-host';
+    const personalAccessToken = (req.body?.personalAccessToken ?? req.body?.token ?? '').toString().trim();
+    const deviceId = (req.body?.deviceId ?? '').toString().trim();
+    const iCalUrl = (req.body?.iCalUrl ?? '').toString().trim();
+
+    if (!personalAccessToken) {
+      return res.status(400).json({ success: false, message: 'personalAccessToken is required' });
+    }
+
+    const tokenCheck = await validateSmartThingsPersonalAccessToken(personalAccessToken);
+
+    await Host.findOneAndUpdate(
+      { hostName },
+      {
+        hostName,
+        smartThingsToken: personalAccessToken,
+        smartThingsRefreshToken: '',
+        tokenExpiresAt: null,
+        deviceId,
+        iCalUrl,
+        isActive: true,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    storeHostToken(hostName, personalAccessToken, '');
+    if (hostName !== 'default-host') {
+      storeHostToken('default-host', personalAccessToken, '');
+    }
+
+    return res.status(200).json({
+      success: true,
+      mode: 'manual_pat',
+      hostName,
+      hasDeviceId: !!deviceId,
+      tokenValidated: tokenCheck.ok,
+      sampleDeviceId: tokenCheck.sampleDeviceId,
+      sampleDeviceName: tokenCheck.sampleDeviceName,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: 'failed to validate or store SmartThings personal access token',
+      detail: error?.response?.data ?? error?.message ?? 'unknown',
+    });
+  }
+});
 
 app.post('/hosts', async (req, res) => {
   const Host = getHostModel();
@@ -785,6 +911,13 @@ app.get('/st/debug-last-webhook', (req, res) => {
   res.status(200).json({
     count: smartThingsWebhookHistory.length,
     items: smartThingsWebhookHistory,
+  });
+});
+
+app.get('/st/debug-last-oauth', (req, res) => {
+  res.status(200).json({
+    count: smartThingsOAuthHistory.length,
+    items: smartThingsOAuthHistory,
   });
 });
 
