@@ -50,8 +50,12 @@ app.get('/status', (req, res) => {
     mongoReadyStateLabel: ['disconnected','connected','connecting','disconnecting'][mongoose.connection.readyState] ?? 'unknown',
     hostModelReady: !!getHostModel(),
     lastMongoErrorMessage,
+    patMode: !!readSmartThingsPAT(),
+    patHostCount: patHosts.size,
+    patHosts: [...patHosts.keys()],
     env: {
       MONGO_URI: !!process.env.MONGO_URI,
+      SMARTTHINGS_PAT: !!process.env.SMARTTHINGS_PAT,
       SMARTTHINGS_CLIENT_ID: !!process.env.SMARTTHINGS_CLIENT_ID,
       OAUTH_MOCK_MODE: process.env.OAUTH_MOCK_MODE ?? 'not set',
       RUN_MONGO_AUTOMATION: process.env.RUN_MONGO_AUTOMATION ?? 'not set',
@@ -160,6 +164,41 @@ function readSmartThingsAuthorizeScope() {
 
 function readManualLinkSecret() {
   return (process.env.SMARTTHINGS_MANUAL_LINK_SECRET ?? '').toString().trim();
+}
+
+// PAT 모드 (MongoDB 없이 환경변수로만 동작)
+function readSmartThingsPAT() {
+  return (process.env.SMARTTHINGS_PAT ?? '').toString().trim();
+}
+function readSmartThingsPATHostName() {
+  return (process.env.SMARTTHINGS_PAT_HOST_NAME ?? 'default-host').toString().trim() || 'default-host';
+}
+function readSmartThingsPATDeviceId() {
+  return (process.env.SMARTTHINGS_PAT_DEVICE_ID ?? '').toString().trim();
+}
+function readSmartThingsPATICalUrl() {
+  return (process.env.SMARTTHINGS_PAT_ICAL_URL ?? '').toString().trim();
+}
+
+// 인메모리 호스트 저장소 (MongoDB 없이도 동작)
+const patHosts = new Map(); // hostName -> {hostName, token, deviceId, iCalUrl, isActive, source}
+
+function savePATHost(hostName, token, deviceId, iCalUrl, source) {
+  const entry = { hostName, token, deviceId: deviceId || '', iCalUrl: iCalUrl || '', isActive: true, source: source || 'manual', updatedAt: new Date().toISOString() };
+  patHosts.set(hostName, entry);
+  if (hostName !== 'default-host') patHosts.set('default-host', { ...entry, hostName: 'default-host' });
+  storeHostToken(hostName, token, '');
+  if (hostName !== 'default-host') storeHostToken('default-host', token, '');
+}
+
+function loadPATFromEnv() {
+  const pat = readSmartThingsPAT();
+  if (!pat) return;
+  const hostName = readSmartThingsPATHostName();
+  const deviceId = readSmartThingsPATDeviceId();
+  const iCalUrl = readSmartThingsPATICalUrl();
+  savePATHost(hostName, pat, deviceId, iCalUrl, 'env');
+  console.log(`[PAT] SMARTTHINGS_PAT 환경변수 로드 완료 - host: ${hostName}, deviceId: ${deviceId || '(none)'}`);
 }
 
 let hostModel = null;
@@ -416,7 +455,6 @@ async function handleSmartThingsCallback(req, res) {
     }
 
     const Host = getHostModel();
-    if (!Host) return res.status(503).send('MongoDB not connected. Set MONGO_URI first.');
 
     const stateData = decodeState(req.query?.state);
     const hostName = (stateData.hostName ?? '테스트_호스트_1').toString();
@@ -435,19 +473,24 @@ async function handleSmartThingsCallback(req, res) {
 
     if (!accessToken) return res.status(500).send('failed to get smartthings access token');
 
-    await Host.findOneAndUpdate(
-      { hostName },
-      {
-        hostName,
-        smartThingsToken: accessToken,
-        smartThingsRefreshToken: refreshToken,
-        tokenExpiresAt,
-        deviceId,
-        iCalUrl,
-        isActive: true,
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
+    // 인메모리에 항상 저장 (MongoDB 유무 무관)
+    savePATHost(hostName, accessToken, deviceId, iCalUrl, 'oauth');
+
+    if (Host) {
+      await Host.findOneAndUpdate(
+        { hostName },
+        {
+          hostName,
+          smartThingsToken: accessToken,
+          smartThingsRefreshToken: refreshToken,
+          tokenExpiresAt,
+          deviceId,
+          iCalUrl,
+          isActive: true,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+    }
 
     rememberSmartThingsOAuth({
       stage: 'callback_success',
@@ -488,7 +531,6 @@ app.post('/auth/smartthings/manual-token', async (req, res) => {
     }
 
     const Host = getHostModel();
-    if (!Host) return res.status(503).json({ success: false, message: 'MongoDB not connected' });
 
     const hostName = (req.body?.hostName ?? 'manual-host').toString().trim() || 'manual-host';
     const personalAccessToken = (req.body?.personalAccessToken ?? req.body?.token ?? '').toString().trim();
@@ -501,23 +543,24 @@ app.post('/auth/smartthings/manual-token', async (req, res) => {
 
     const tokenCheck = await validateSmartThingsPersonalAccessToken(personalAccessToken);
 
-    await Host.findOneAndUpdate(
-      { hostName },
-      {
-        hostName,
-        smartThingsToken: personalAccessToken,
-        smartThingsRefreshToken: '',
-        tokenExpiresAt: null,
-        deviceId,
-        iCalUrl,
-        isActive: true,
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
+    // 인메모리에 항상 저장 (MongoDB 유무 무관)
+    savePATHost(hostName, personalAccessToken, deviceId, iCalUrl, 'manual');
 
-    storeHostToken(hostName, personalAccessToken, '');
-    if (hostName !== 'default-host') {
-      storeHostToken('default-host', personalAccessToken, '');
+    // MongoDB 있으면 추가 저장
+    if (Host) {
+      await Host.findOneAndUpdate(
+        { hostName },
+        {
+          hostName,
+          smartThingsToken: personalAccessToken,
+          smartThingsRefreshToken: '',
+          tokenExpiresAt: null,
+          deviceId,
+          iCalUrl,
+          isActive: true,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
     }
 
     return res.status(200).json({
@@ -570,11 +613,29 @@ app.post('/hosts', async (req, res) => {
 
 app.get('/hosts', async (req, res) => {
   const Host = getHostModel();
-  if (!Host) return res.status(503).json({ success: false, message: 'MongoDB not connected' });
+  if (!Host) {
+    // MongoDB 없을 때 인메모리 patHosts 반환
+    const memHosts = [...patHosts.values()];
+    return res.status(200).json({
+      success: true,
+      mode: 'memory',
+      count: memHosts.length,
+      hosts: memHosts.map((h) => ({
+        hostName: h.hostName,
+        deviceId: h.deviceId,
+        iCalUrl: h.iCalUrl,
+        hasToken: !!h.token,
+        isActive: h.isActive !== false,
+        source: h.source ?? 'memory',
+        updatedAt: h.updatedAt,
+      })),
+    });
+  }
 
   const hosts = await Host.find({}).sort({ updatedAt: -1 }).lean();
   return res.status(200).json({
     success: true,
+    mode: 'mongodb',
     count: hosts.length,
     hosts: hosts.map((h) => ({
       id: h._id,
@@ -590,16 +651,25 @@ app.get('/hosts', async (req, res) => {
 
 async function runMongoAutomationScheduler() {
   const Host = getHostModel();
-  if (!Host) return;
-
   console.log('🔍 전국 숙소 체크아웃 감시 스케줄러 가동 중...');
 
-  const hosts = await Host.find({ isActive: { $ne: false } }).lean();
+  let rawHosts = [];
+  if (Host) {
+    rawHosts = await Host.find({ isActive: { $ne: false } }).lean();
+  } else {
+    // MongoDB 없을 때 인메모리 PAT 호스트 사용
+    rawHosts = [...patHosts.values()].filter((h) => h.isActive !== false);
+  }
+  if (rawHosts.length === 0) {
+    console.log('[Scheduler] 등록된 호스트 없음 (MongoDB disconnected + patHosts empty)');
+    return;
+  }
+
   const now = new Date();
 
-  for (const host of hosts) {
+  for (const host of rawHosts) {
     const hostName = (host.hostName ?? '').toString();
-    const token = (host.smartThingsToken ?? '').toString();
+    const token = (Host ? (host.smartThingsToken ?? '') : (host.token ?? '')).toString();
     const deviceId = (host.deviceId ?? '').toString();
     const iCalUrl = (host.iCalUrl ?? '').toString();
 
@@ -1376,6 +1446,9 @@ wss.on('connection', (ws, req) => {
 });
 
 async function initializeMongoAndAutomation() {
+  // PAT 환경변수 있으면 MongoDB 없이도 즉시 토큰 로드
+  loadPATFromEnv();
+
   try {
     await connectMongoIfConfigured();
   } catch (error) {
